@@ -1740,6 +1740,7 @@ NTSTATUS WINAPI LdrUnlockLoaderLock( ULONG flags, ULONG_PTR magic )
 NTSTATUS WINAPI LdrGetProcedureAddress(HMODULE module, const ANSI_STRING *name,
                                        ULONG ord, PVOID *address)
 {
+    WINE_MODREF *wm;
     IMAGE_EXPORT_DIRECTORY *exports;
     DWORD exp_size;
     NTSTATUS ret = STATUS_PROCEDURE_NOT_FOUND;
@@ -1747,17 +1748,29 @@ NTSTATUS WINAPI LdrGetProcedureAddress(HMODULE module, const ANSI_STRING *name,
     RtlEnterCriticalSection( &loader_section );
 
     /* check if the module itself is invalid to return the proper error */
-    if (!get_modref( module )) ret = STATUS_DLL_NOT_FOUND;
-    else if ((exports = RtlImageDirectoryEntryToData( module, TRUE,
-                                                      IMAGE_DIRECTORY_ENTRY_EXPORT, &exp_size )))
+    if (!(wm = get_modref( module )))
     {
-        LPCWSTR load_path = NtCurrentTeb()->Peb->ProcessParameters->DllPath.Buffer;
-        void *proc = name ? find_named_export( module, exports, exp_size, name->Buffer, -1, load_path )
-                          : find_ordinal_export( module, exports, exp_size, ord - exports->Base, load_path );
-        if (proc)
+        ret = STATUS_DLL_NOT_FOUND;
+    }
+    else
+    {
+        if ((exports = RtlImageDirectoryEntryToData( module, TRUE,
+                                                     IMAGE_DIRECTORY_ENTRY_EXPORT, &exp_size )))
         {
-            *address = proc;
-            ret = STATUS_SUCCESS;
+            const WCHAR *load_path = NtCurrentTeb()->Peb->ProcessParameters->DllPath.Buffer;
+            void *proc = name ? find_named_export( module, exports, exp_size, name->Buffer, -1, load_path )
+                              : find_ordinal_export( module, exports, exp_size, ord - exports->Base, load_path );
+            if (proc)
+            {
+                *address = proc;
+                ret = STATUS_SUCCESS;
+            }
+        }
+
+        if (ret == STATUS_PROCEDURE_NOT_FOUND)
+        {
+            WARN( "function %s (ordinal %d) not found in module %s\n",
+                  wine_dbgstr_a(name ? name->Buffer : NULL), ord, wine_dbgstr_w(wm->ldr.FullDllName.Buffer) );
         }
     }
 
