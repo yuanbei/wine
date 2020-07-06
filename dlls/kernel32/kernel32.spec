@@ -1443,7 +1443,7 @@
 @ stdcall -import SetProcessPreferredUILanguages(long ptr ptr)
 @ stdcall -import SetProcessPriorityBoost(long long)
 @ stdcall -import SetProcessShutdownParameters(long long)
-# @ stub SetProcessUserModeExceptionPolicy
+@ stdcall SetProcessUserModeExceptionPolicy(long)
 @ stdcall SetProcessWorkingSetSize(long long long)
 @ stdcall -import SetProcessWorkingSetSizeEx(long long long long)
 @ stdcall SetSearchPathMode(long)

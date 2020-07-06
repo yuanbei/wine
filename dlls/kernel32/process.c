@@ -901,3 +901,10 @@ BOOL WINAPI GetProcessUserModeExceptionPolicy(DWORD *flags)
     SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
     return FALSE;
 }
+
+BOOL WINAPI SetProcessUserModeExceptionPolicy(DWORD flags)
+{
+    FIXME( "0x%x: stub\n", flags );
+    SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
+    return FALSE;
+}
