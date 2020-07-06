@@ -894,3 +894,10 @@ BOOL WINAPI UmsThreadYield(void *param)
     SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
     return FALSE;
 }
+
+BOOL WINAPI GetProcessUserModeExceptionPolicy(DWORD *flags)
+{
+    FIXME( "%p: stub\n", flags );
+    SetLastError( ERROR_CALL_NOT_IMPLEMENTED );
+    return FALSE;
+}
