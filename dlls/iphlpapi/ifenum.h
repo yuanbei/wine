@@ -40,6 +40,7 @@
 #define USE_WS_PREFIX
 #include "iprtrmib.h"
 #include "winsock2.h"
+#include "ip2string.h"
 
 #define MAX_INTERFACE_PHYSADDR    8
 #define MAX_INTERFACE_DESCRIPTION 256
@@ -109,10 +110,12 @@ DWORD getIPAddrTable(PMIB_IPADDRTABLE *ppIpAddrTable, HANDLE heap, DWORD flags) 
 ULONG v6addressesFromIndex(IF_INDEX index, SOCKET_ADDRESS **addrs, ULONG *num_addrs,
  SOCKET_ADDRESS **masks) DECLSPEC_HIDDEN;
 
-/* Converts the network-order bytes in addr to a printable string.  Returns
- * string.
+/* Converts the network-order bytes in addr to a printable string.
  */
-char *toIPAddressString(unsigned int addr, char string[16]) DECLSPEC_HIDDEN;
+static inline void toIPAddressString(ULONG addr, char string[16])
+{
+  RtlIpv4AddressToStringA((IN_ADDR *)&addr, string);
+}
 
 DWORD getInterfaceMtuByName(const char *name, PDWORD mtu) DECLSPEC_HIDDEN;
 DWORD getInterfaceStatusByName(const char *name, INTERNAL_IF_OPER_STATUS *status) DECLSPEC_HIDDEN;
