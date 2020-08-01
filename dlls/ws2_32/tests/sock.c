@@ -45,9 +45,6 @@
 
 #define NUM_UDP_PEERS 3    /* Number of UDP sockets to create and test > 1 */
 
-#define NUM_THREADS 3      /* Number of threads to run getservbyname */
-#define NUM_QUERIES 250    /* Number of getservbyname queries per thread */
-
 #define SERVERIP "127.0.0.1"   /* IP to bind to */
 #define SERVERPORT 9374        /* Port number to bind to */
 
@@ -2238,68 +2235,6 @@ static void test_UDP(void)
         n_recv = recvfrom ( peer[0].s, buf, sizeof(buf), 0,(struct sockaddr *) &peer[0].peer, &ss );
         ok ( n_recv == sizeof(buf), "UDP: recvfrom() received wrong amount of data or socket error: %d\n", n_recv );
         ok ( memcmp ( &peer[0].peer.sin_port, buf, sizeof(peer[0].addr.sin_port) ) == 0, "UDP: port numbers do not match\n" );
-    }
-}
-
-static DWORD WINAPI do_getservbyname( void *param )
-{
-    struct {
-        const char *name;
-        const char *proto;
-        int port;
-    } serv[2] = { {"domain", "udp", 53}, {"telnet", "tcp", 23} };
-
-    HANDLE *starttest = param;
-    int i, j;
-    struct servent *pserv[2];
-
-    ok ( WaitForSingleObject ( *starttest, TEST_TIMEOUT * 1000 ) != WAIT_TIMEOUT,
-         "test_getservbyname: timeout waiting for start signal\n" );
-
-    /* ensure that necessary buffer resizes are completed */
-    for ( j = 0; j < 2; j++) {
-        pserv[j] = getservbyname ( serv[j].name, serv[j].proto );
-    }
-
-    for ( i = 0; i < NUM_QUERIES / 2; i++ ) {
-        for ( j = 0; j < 2; j++ ) {
-            pserv[j] = getservbyname ( serv[j].name, serv[j].proto );
-            ok ( pserv[j] != NULL || broken(pserv[j] == NULL) /* win8, fixed in win81 */,
-                 "getservbyname could not retrieve information for %s: %d\n", serv[j].name, WSAGetLastError() );
-            if ( !pserv[j] ) continue;
-            ok ( pserv[j]->s_port == htons(serv[j].port),
-                 "getservbyname returned the wrong port for %s: %d\n", serv[j].name, ntohs(pserv[j]->s_port) );
-            ok ( !strcmp ( pserv[j]->s_proto, serv[j].proto ),
-                 "getservbyname returned the wrong protocol for %s: %s\n", serv[j].name, pserv[j]->s_proto );
-            ok ( !strcmp ( pserv[j]->s_name, serv[j].name ),
-                 "getservbyname returned the wrong name for %s: %s\n", serv[j].name, pserv[j]->s_name );
-        }
-
-        ok ( pserv[0] == pserv[1] || broken(pserv[0] != pserv[1]) /* win8, fixed in win81 */,
-             "getservbyname: winsock resized servent buffer when not necessary\n" );
-    }
-
-    return 0;
-}
-
-static void test_getservbyname(void)
-{
-    int i;
-    HANDLE starttest, thread[NUM_THREADS];
-    DWORD thread_id[NUM_THREADS];
-
-    starttest = CreateEventA ( NULL, 1, 0, "test_getservbyname_starttest" );
-
-    /* create threads */
-    for ( i = 0; i < NUM_THREADS; i++ ) {
-        thread[i] = CreateThread ( NULL, 0, do_getservbyname, &starttest, 0, &thread_id[i] );
-    }
-
-    /* signal threads to start */
-    SetEvent ( starttest );
-
-    for ( i = 0; i < NUM_THREADS; i++) {
-        WaitForSingleObject ( thread[i], TEST_TIMEOUT * 1000 );
     }
 }
 
@@ -10508,7 +10443,6 @@ START_TEST( sock )
 
     test_UDP();
 
-    test_getservbyname();
     test_WSASocket();
     test_WSADuplicateSocket();
     test_WSAEnumNetworkEvents();

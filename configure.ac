@@ -2240,7 +2240,6 @@ AC_CHECK_FUNCS(\
 	getaddrinfo \
 	getnameinfo \
 	getnetbyname \
-	getservbyport \
 )
 
 dnl Check for clock_gettime which may be in -lrt

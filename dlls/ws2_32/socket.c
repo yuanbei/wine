@@ -781,7 +781,7 @@ static FARPROC blocking_hook = (FARPROC)WSA_DefaultBlockingHook;
 static struct WS_hostent *WS_create_he(char *name, int aliases, int aliases_size, int addresses, int address_length);
 static struct WS_hostent *WS_dup_he(const struct hostent* p_he);
 static struct WS_protoent *WS_create_pe( const char *name, char **aliases, int prot );
-static struct WS_servent *WS_dup_se(const struct servent* p_se);
+static struct WS_servent *WS_create_se( const char *name, char **aliases, int port, const char *proto );
 static int ws_protocol_info(SOCKET s, int unicode, WSAPROTOCOL_INFOW *buffer, int *size);
 
 int WSAIOCTL_GetInterfaceCount(void);
@@ -1620,20 +1620,6 @@ static int convert_sockopt(INT *level, INT *optname)
 }
 
 /* ----------------------------------- Per-thread info (or per-process?) */
-
-static char *strdup_lower(const char *str)
-{
-    int i;
-    char *ret = HeapAlloc( GetProcessHeap(), 0, strlen(str) + 1 );
-
-    if (ret)
-    {
-        for (i = 0; str[i]; i++) ret[i] = tolower(str[i]);
-        ret[i] = 0;
-    }
-    else SetLastError(WSAENOBUFS);
-    return ret;
-}
 
 /* Utility: get the SO_RCVTIMEO or SO_SNDTIMEO socket option
  * from an fd and return the value converted to milli seconds
@@ -6383,40 +6369,257 @@ struct WS_protoent* WINAPI WS_getprotobynumber(int number)
 }
 
 
+static const struct
+{
+    unsigned short port;
+    const char *names[3];
+    const char *protos[2];
+}
+services[] =
+{
+    {     7, {"echo"}, {"tcp", "udp"} },
+    {     9, {"discard", "sink"}, {"tcp", "udp"} },
+    {    11, {"systat", "users"}, {"tcp", "udp"} },
+    {    13, {"daytime"}, {"tcp", "udp"} },
+    {    17, {"qotd", "quote"}, {"tcp", "udp"} },
+    {    19, {"chargen", "ttytst"}, {"tcp", "udp"} },
+    {    20, {"ftp-data"}, {"tcp"} },
+    {    21, {"ftp"}, {"tcp"} },
+    {    22, {"ssh"}, {"tcp"} },
+    {    23, {"telnet"}, {"tcp"} },
+    {    25, {"smtp", "mail"}, {"tcp"} },
+    {    37, {"time", "timserver"}, {"tcp", "udp"} },
+    {    39, {"rlp", "resource"}, {"udp"} },
+    {    42, {"nameserver", "name"}, {"tcp", "udp"} },
+    {    43, {"nicname", "whois"}, {"tcp"} },
+    {    53, {"domain"}, {"tcp", "udp"} },
+    {    67, {"bootps", "dhcps"}, {"udp"} },
+    {    68, {"bootpc", "dhcpc"}, {"udp"} },
+    {    69, {"tftp"}, {"udp"} },
+    {    70, {"gopher"}, {"tcp"} },
+    {    79, {"finger"}, {"tcp"} },
+    {    80, {"http", "www"}, {"tcp"} },
+    {    81, {"hosts2-ns"}, {"tcp", "udp"} },
+    {    88, {"kerberos", "krb5"}, {"tcp", "udp"} },
+    {   101, {"hostname", "hostnames"}, {"tcp"} },
+    {   102, {"iso-tsap"}, {"tcp"} },
+    {   107, {"rtelnet"}, {"tcp"} },
+    {   109, {"pop2", "postoffice"}, {"tcp"} },
+    {   110, {"pop3"}, {"tcp"} },
+    {   111, {"sunrpc", "rpcbind"}, {"tcp", "udp"} },
+    {   113, {"auth", "ident"}, {"tcp"} },
+    {   117, {"uucp-path"}, {"tcp"} },
+    {   118, {"sqlserv"}, {"tcp"} },
+    {   119, {"nntp", "usenet"}, {"tcp"} },
+    {   123, {"ntp"}, {"udp"} },
+    {   135, {"epmap", "loc-srv"}, {"tcp", "udp"} },
+    {   137, {"netbios-ns", "nbname"}, {"tcp", "udp"} },
+    {   138, {"netbios-dgm", "nbdatagram"}, {"udp"} },
+    {   139, {"netbios-ssn", "nbsession"}, {"tcp"} },
+    {   143, {"imap", "imap4"}, {"tcp"} },
+    {   150, {"sql-net"}, {"tcp"} },
+    {   156, {"sqlsrv"}, {"tcp"} },
+    {   158, {"pcmail-srv"}, {"tcp"} },
+    {   161, {"snmp"}, {"udp"} },
+    {   162, {"snmptrap", "snmp-trap"}, {"udp"} },
+    {   170, {"print-srv"}, {"tcp"} },
+    {   179, {"bgp"}, {"tcp"} },
+    {   194, {"irc"}, {"tcp"} },
+    {   213, {"ipx"}, {"udp"} },
+    {   322, {"rtsps"}, {"tcp", "udp"} },
+    {   349, {"mftp"}, {"tcp", "udp"} },
+    {   389, {"ldap"}, {"tcp"} },
+    {   443, {"https", "MCom"}, {"tcp", "udp"} },
+    {   445, {"microsoft-ds"}, {"tcp", "udp"} },
+    {   464, {"kpasswd"}, {"tcp", "udp"} },
+    {   500, {"isakmp", "ike"}, {"udp"} },
+    {   507, {"crs"}, {"tcp", "udp"} },
+    {   512, {"exec"}, {"tcp"} },
+    {   512, {"biff", "comsat"}, {"udp", "tcp"} },
+    {   513, {"login"}, {"tcp"} },
+    {   513, {"who", "whod"}, {"udp", "tcp"} },
+    {   514, {"cmd", "shell"}, {"tcp"} },
+    {   514, {"syslog"}, {"udp", "tcp"} },
+    {   515, {"printer", "spooler"}, {"tcp"} },
+    {   517, {"talk"}, {"udp"} },
+    {   518, {"ntalk"}, {"udp"} },
+    {   520, {"efs"}, {"tcp"} },
+    {   520, {"router", "route"}, {"udp", "tcp"} },
+    {   522, {"ulp"}, {"tcp", "udp"} },
+    {   525, {"timed", "timeserver"}, {"udp"} },
+    {   526, {"tempo", "newdate"}, {"tcp"} },
+    {   529, {"irc-serv"}, {"tcp", "udp"} },
+    {   530, {"courier", "rpc"}, {"tcp"} },
+    {   531, {"conference", "chat"}, {"tcp"} },
+    {   532, {"netnews", "readnews"}, {"tcp"} },
+    {   533, {"netwall"}, {"udp"} },
+    {   540, {"uucp", "uucpd"}, {"tcp"} },
+    {   543, {"klogin"}, {"tcp"} },
+    {   544, {"kshell", "krcmd"}, {"tcp"} },
+    {   546, {"dhcpv6-client"}, {"tcp", "udp"} },
+    {   547, {"dhcpv6-server"}, {"tcp", "udp"} },
+    {   548, {"afpovertcp"}, {"tcp", "udp"} },
+    {   550, {"new-rwho", "new-who"}, {"udp"} },
+    {   554, {"rtsp"}, {"tcp", "udp"} },
+    {   556, {"remotefs", "rfs"}, {"tcp"} },
+    {   560, {"rmonitor", "rmonitord"}, {"udp"} },
+    {   561, {"monitor"}, {"udp"} },
+    {   563, {"nntps", "snntp"}, {"tcp", "udp"} },
+    {   565, {"whoami"}, {"tcp", "udp"} },
+    {   568, {"ms-shuttle"}, {"tcp", "udp"} },
+    {   569, {"ms-rome"}, {"tcp", "udp"} },
+    {   593, {"http-rpc-epmap"}, {"tcp", "udp"} },
+    {   612, {"hmmp-ind"}, {"tcp", "udp"} },
+    {   613, {"hmmp-op"}, {"tcp", "udp"} },
+    {   636, {"ldaps", "sldap"}, {"tcp"} },
+    {   666, {"doom"}, {"tcp", "udp"} },
+    {   691, {"msexch-routing"}, {"tcp", "udp"} },
+    {   749, {"kerberos-adm"}, {"tcp", "udp"} },
+    {   750, {"kerberos-iv"}, {"udp"} },
+    {   800, {"mdbs_daemon"}, {"tcp", "udp"} },
+    {   989, {"ftps-data"}, {"tcp"} },
+    {   990, {"ftps"}, {"tcp"} },
+    {   992, {"telnets"}, {"tcp"} },
+    {   993, {"imaps"}, {"tcp"} },
+    {   994, {"ircs"}, {"tcp"} },
+    {   995, {"pop3s", "spop3"}, {"tcp", "udp"} },
+    {  1034, {"activesync"}, {"tcp"} },
+    {  1109, {"kpop"}, {"tcp"} },
+    {  1110, {"nfsd-status"}, {"tcp"} },
+    {  1110, {"nfsd-keepalive"}, {"udp"} },
+    {  1155, {"nfa"}, {"tcp", "udp"} },
+    {  1167, {"phone"}, {"udp"} },
+    {  1270, {"opsmgr"}, {"tcp", "udp"} },
+    {  1433, {"ms-sql-s"}, {"tcp", "udp"} },
+    {  1434, {"ms-sql-m"}, {"tcp", "udp"} },
+    {  1477, {"ms-sna-server"}, {"tcp", "udp"} },
+    {  1478, {"ms-sna-base"}, {"tcp", "udp"} },
+    {  1512, {"wins"}, {"tcp", "udp"} },
+    {  1524, {"ingreslock", "ingres"}, {"tcp"} },
+    {  1607, {"stt"}, {"tcp", "udp"} },
+    {  1701, {"l2tp"}, {"udp"} },
+    {  1711, {"pptconference"}, {"tcp", "udp"} },
+    {  1723, {"pptp"}, {"tcp"} },
+    {  1731, {"msiccp"}, {"tcp", "udp"} },
+    {  1745, {"remote-winsock"}, {"tcp", "udp"} },
+    {  1755, {"ms-streaming"}, {"tcp", "udp"} },
+    {  1801, {"msmq"}, {"tcp", "udp"} },
+    {  1812, {"radius"}, {"udp"} },
+    {  1813, {"radacct"}, {"udp"} },
+    {  1863, {"msnp"}, {"tcp", "udp"} },
+    {  1900, {"ssdp"}, {"tcp", "udp"} },
+    {  1944, {"close-combat"}, {"tcp", "udp"} },
+    {  2049, {"nfsd", "nfs"}, {"udp"} },
+    {  2053, {"knetd"}, {"tcp"} },
+    {  2106, {"mzap"}, {"tcp", "udp"} },
+    {  2177, {"qwave"}, {"tcp", "udp"} },
+    {  2234, {"directplay"}, {"tcp", "udp"} },
+    {  2382, {"ms-olap3"}, {"tcp", "udp"} },
+    {  2383, {"ms-olap4"}, {"tcp", "udp"} },
+    {  2393, {"ms-olap1"}, {"tcp", "udp"} },
+    {  2394, {"ms-olap2"}, {"tcp", "udp"} },
+    {  2460, {"ms-theater"}, {"tcp", "udp"} },
+    {  2504, {"wlbs"}, {"tcp", "udp"} },
+    {  2525, {"ms-v-worlds"}, {"tcp", "udp"} },
+    {  2701, {"sms-rcinfo"}, {"tcp", "udp"} },
+    {  2702, {"sms-xfer"}, {"tcp", "udp"} },
+    {  2703, {"sms-chat"}, {"tcp", "udp"} },
+    {  2704, {"sms-remctrl"}, {"tcp", "udp"} },
+    {  2725, {"msolap-ptp2"}, {"tcp", "udp"} },
+    {  2869, {"icslap"}, {"tcp", "udp"} },
+    {  3020, {"cifs"}, {"tcp", "udp"} },
+    {  3074, {"xbox"}, {"tcp", "udp"} },
+    {  3126, {"ms-dotnetster"}, {"tcp", "udp"} },
+    {  3132, {"ms-rule-engine"}, {"tcp", "udp"} },
+    {  3268, {"msft-gc"}, {"tcp", "udp"} },
+    {  3269, {"msft-gc-ssl"}, {"tcp", "udp"} },
+    {  3343, {"ms-cluster-net"}, {"tcp", "udp"} },
+    {  3389, {"ms-wbt-server"}, {"tcp", "udp"} },
+    {  3535, {"ms-la"}, {"tcp", "udp"} },
+    {  3540, {"pnrp-port"}, {"tcp", "udp"} },
+    {  3544, {"teredo"}, {"tcp", "udp"} },
+    {  3587, {"p2pgroup"}, {"tcp", "udp"} },
+    {  3702, {"ws-discovery", "upnp-discovery"}, {"udp", "tcp"} },
+    {  3776, {"dvcprov-port"}, {"tcp", "udp"} },
+    {  3847, {"msfw-control"}, {"tcp"} },
+    {  3882, {"msdts1"}, {"tcp"} },
+    {  3935, {"sdp-portmapper"}, {"tcp", "udp"} },
+    {  4350, {"net-device"}, {"tcp", "udp"} },
+    {  4500, {"ipsec-msft"}, {"tcp", "udp"} },
+    {  5355, {"llmnr"}, {"tcp", "udp"} },
+    {  5357, {"wsd"}, {"tcp"} },
+    {  5358, {"wsd"}, {"tcp"} },
+    {  5678, {"rrac"}, {"tcp", "udp"} },
+    {  5679, {"dccm"}, {"tcp", "udp"} },
+    {  5720, {"ms-licensing"}, {"tcp", "udp"} },
+    {  6073, {"directplay8"}, {"tcp", "udp"} },
+    {  9535, {"man"}, {"tcp"} },
+    {  9753, {"rasadv"}, {"tcp", "udp"} },
+    { 11320, {"imip-channels"}, {"tcp", "udp"} },
+    { 47624, {"directplaysrvr"}, {"tcp", "udp"} },
+};
+
 /***********************************************************************
  *		getservbyname		(WS2_32.55)
  */
 struct WS_servent* WINAPI WS_getservbyname(const char *name, const char *proto)
 {
     struct WS_servent* retval = NULL;
-    struct servent*     serv;
-    char *name_str;
-    char *proto_str = NULL;
-
-    if (!(name_str = strdup_lower(name))) return NULL;
-
-    if (proto && *proto)
+    int i, j, k;
+    for (i = 0; i < ARRAY_SIZE(services); i++)
     {
-        if (!(proto_str = strdup_lower(proto)))
+        for (j = 0; services[i].names[j]; j++)
         {
-            HeapFree( GetProcessHeap(), 0, name_str );
-            return NULL;
+            if (_strnicmp(services[i].names[j], name, -1) != 0) continue;
+            for (k = 0; k < ARRAY_SIZE(services[0].protos) && services[i].protos[k]; k++)
+            {
+                if (proto && _strnicmp(services[i].protos[k], proto, -1) != 0) continue;
+                retval = WS_create_se(services[i].names[0], (char **)services[i].names + 1,
+                                      services[i].port, services[i].protos[k]);
+                goto found;
+            }
+            break;
         }
     }
-
-    EnterCriticalSection( &csWSgetXXXbyYYY );
-    serv = getservbyname(name_str, proto_str);
-    if( serv != NULL )
+    if (!retval)
     {
-        retval = WS_dup_se(serv);
+        WARN("service %s/%s not found\n", debugstr_a(name), debugstr_a(proto));
+        SetLastError(WSANO_DATA);
     }
-    else SetLastError(WSANO_DATA);
-    LeaveCriticalSection( &csWSgetXXXbyYYY );
-    HeapFree( GetProcessHeap(), 0, proto_str );
-    HeapFree( GetProcessHeap(), 0, name_str );
-    TRACE( "%s, %s ret %p\n", debugstr_a(name), debugstr_a(proto), retval );
+found:
+    TRACE("%s/%s ret %p\n", debugstr_a(name), debugstr_a(proto), retval);
     return retval;
 }
+
+/***********************************************************************
+ *		getservbyport		(WS2_32.56)
+ */
+struct WS_servent* WINAPI WS_getservbyport(int port, const char *proto)
+{
+    struct WS_servent* retval = NULL;
+    int i, j;
+    port = ntohs(port);
+    for (i = 0; i < ARRAY_SIZE(services); i++)
+    {
+        if (services[i].port != port) continue;
+        for (j = 0; j < ARRAY_SIZE(services[0].protos) && services[i].protos[j]; j++)
+        {
+            if (proto && _strnicmp(services[i].protos[j], proto, -1) != 0) continue;
+            retval = WS_create_se(services[i].names[0], (char **)services[i].names + 1,
+                                  services[i].port, services[i].protos[j]);
+            goto found;
+        }
+    }
+    if (!retval)
+    {
+        WARN("service %d/%s not found\n", port, debugstr_a(proto));
+        SetLastError(WSANO_DATA);
+    }
+found:
+    TRACE("%d/%s ret %p\n", port, debugstr_a(proto), retval);
+    return retval;
+}
+
 
 /***********************************************************************
  *		freeaddrinfo		(WS2_32.@)
@@ -7107,32 +7310,6 @@ int WINAPI GetNameInfoW(const SOCKADDR *sa, WS_socklen_t salen, PWCHAR host,
     return ret;
 }
 
-/***********************************************************************
- *		getservbyport		(WS2_32.56)
- */
-struct WS_servent* WINAPI WS_getservbyport(int port, const char *proto)
-{
-    struct WS_servent* retval = NULL;
-#ifdef HAVE_GETSERVBYPORT
-    struct servent*     serv;
-    char *proto_str = NULL;
-
-    if (proto && *proto)
-    {
-        if (!(proto_str = strdup_lower(proto))) return NULL;
-    }
-    EnterCriticalSection( &csWSgetXXXbyYYY );
-    if( (serv = getservbyport(port, proto_str)) != NULL ) {
-        retval = WS_dup_se(serv);
-    }
-    else SetLastError(WSANO_DATA);
-    LeaveCriticalSection( &csWSgetXXXbyYYY );
-    HeapFree( GetProcessHeap(), 0, proto_str );
-#endif
-    TRACE("%d (i.e. port %d), %s ret %p\n", port, (int)ntohl(port), debugstr_a(proto), retval);
-    return retval;
-}
-
 
 /***********************************************************************
  *              gethostname           (WS2_32.57)
@@ -7580,12 +7757,7 @@ INT WINAPI WSAUnhookBlockingHook(void)
 
 /* ----------------------------------- end of API stuff */
 
-/* ----------------------------------- helper functions -
- *
- * TODO: Merge WS_dup_..() stuff into one function that
- * would operate with a generic structure containing internal
- * pointers (via a template of some kind).
- */
+/* ----------------------------------- helper functions */
 
 static int list_size(char** l, int item_size)
 {
@@ -7720,31 +7892,20 @@ static struct WS_protoent *WS_create_pe( const char *name, char **aliases, int p
 
 /* ----- servent */
 
-static struct WS_servent *WS_dup_se(const struct servent* p_se)
+static struct WS_servent *WS_create_se( const char *name, char **aliases, int port, const char *proto )
 {
-    char *p;
-    struct WS_servent *p_to;
+    struct WS_servent *ret;
+    unsigned int size = sizeof(*ret) + strlen(name) + 1 + strlen(proto) + sizeof(char *) + list_size(aliases, 0);
 
-    int size = (sizeof(*p_se) +
-                strlen(p_se->s_proto) + 1 +
-                strlen(p_se->s_name) + 1 +
-                list_size(p_se->s_aliases, 0));
-
-    if (!(p_to = check_buffer_se(size))) return NULL;
-    p_to->s_port = p_se->s_port;
-
-    p = (char *)(p_to + 1);
-    p_to->s_name = p;
-    strcpy(p, p_se->s_name);
-    p += strlen(p) + 1;
-
-    p_to->s_proto = p;
-    strcpy(p, p_se->s_proto);
-    p += strlen(p) + 1;
-
-    p_to->s_aliases = (char **)p;
-    list_dup(p_se->s_aliases, p_to->s_aliases, 0);
-    return p_to;
+    if (!(ret = check_buffer_se( size ))) return NULL;
+    ret->s_port = htons(port);
+    ret->s_name = (char *)(ret + 1);
+    ret->s_proto = (char *)ret->s_name + strlen(name) + 1;
+    strcpy( ret->s_name, name );
+    strcpy( ret->s_proto, proto );
+    ret->s_aliases = (char **)ret->s_proto + strlen(proto) / sizeof(char *) + 1;
+    list_dup( aliases, ret->s_aliases, 0 );
+    return ret;
 }
 
 
